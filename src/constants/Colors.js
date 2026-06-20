@@ -1,0 +1,26 @@
+export const Colors = {
+  primary: '#6B2D91',
+  primaryLight: '#9B59B6',
+  primaryDark: '#4A1F6A',
+  gold: '#D4A843',
+  goldLight: '#F0D78C',
+  bgLight: '#F8F4FC',
+  bgPurple: '#F0E6FA',
+  bgWhite: '#FFFFFF',
+  textDark: '#1A1A2E',
+  textGray: '#6B7280',
+  textLight: '#9CA3AF',
+  textWhite: '#FFFFFF',
+  success: '#10B981',
+  error: '#EF4444',
+  warning: '#F59E0B',
+  menora: {
+    purple: '#7B3FA0',
+    pink: '#E91E8C',
+    yellow: '#FFEB3B',
+    orange: '#FF7043',
+    red: '#F44336',
+    green: '#8BC34A',
+    blue: '#2196F3',
+  }
+};
