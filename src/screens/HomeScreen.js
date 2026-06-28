@@ -67,7 +67,10 @@ const HomeScreen = ({ navigation }) => {
             <Text style={styles.greeting}>Shalom, Gagan! 👋</Text>
             <Text style={styles.welcome}>Welcome to the Family Gathering</Text>
           </View>
-          <TouchableOpacity style={styles.bellButton}>
+          <TouchableOpacity 
+            style={styles.bellButton}
+            onPress={() => navigation.navigate('Notifications')}
+          >
             <Text style={styles.bellIcon}>🔔</Text>
             <View style={styles.badge}>
               <Text style={styles.badgeText}>4</Text>
@@ -96,8 +99,7 @@ const HomeScreen = ({ navigation }) => {
             style={styles.missionGradient}
           >
             <Text style={styles.missionLabel}>OUR MISSION</Text>
-            <Text style={styles.missionTitle}>To Reach Urban{'
-'}Broken Families</Text>
+            <Text style={styles.missionTitle}>To Reach Urban{'\n'}Broken Families</Text>
           </LinearGradient>
         </Animated.View>
 
@@ -128,10 +130,10 @@ const HomeScreen = ({ navigation }) => {
             onPress={() => navigation.navigate('Donation')}
           />
           <QuickAction 
-            icon="📅" 
-            title="Events" 
+            icon="🔔" 
+            title="Updates" 
             color={Colors.menora.blue}
-            onPress={() => navigation.navigate('Home')}
+            onPress={() => navigation.navigate('Notifications')}
           />
         </View>
 
@@ -142,8 +144,7 @@ const HomeScreen = ({ navigation }) => {
           ]}
         >
           <Text style={styles.studyLabel}>Weekly Bible Study</Text>
-          <Text style={styles.studyTitle}>Restoring the Foundations:{'
-'}Healing Broken Homes</Text>
+          <Text style={styles.studyTitle}>Restoring the Foundations:{'\n'}Healing Broken Homes</Text>
           <View style={styles.progressRow}>
             <Text style={styles.progressText}>Week 2 of 4</Text>
             <Text style={styles.progressPercent}>60%</Text>

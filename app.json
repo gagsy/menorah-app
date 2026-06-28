@@ -4,23 +4,37 @@
     "slug": "menorah-app",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "icon": "./assets/images/icon.png",
     "userInterfaceStyle": "light",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.gagsy.menorahapp"
     },
     "android": {
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/android-icon-foreground.png",
-        "backgroundImage": "./assets/android-icon-background.png",
-        "monochromeImage": "./assets/android-icon-monochrome.png"
+        "foregroundImage": "./assets/images/icon.png"
       },
       "package": "com.gagsy.menorahapp"
     },
-    "web": {
-      "favicon": "./assets/favicon.png"
-    },
+    "plugins": [
+      [
+        "@react-native-google-signin/google-signin",
+        {
+          "iosUrlScheme": "com.googleusercontent.apps.778141841150-18povujgoiq6m5i78t7v3nllf92aitbc"
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/icon.png",
+          "color": "#6E3FA3",
+          "sounds": [],
+          "androidMode": "default",
+          "androidCollapsedTitle": "Menorah Family Camp"
+        }
+      ]
+    ],
     "extra": {
       "eas": {
         "projectId": "a05db0b5-cca0-4bc0-b662-375b324213e0"
