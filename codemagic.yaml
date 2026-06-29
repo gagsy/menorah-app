@@ -67,66 +67,103 @@ workflows:
           cd ios
           pod install --repo-update
 
-      - name: Build and package iOS
+      - name: Build iOS Simulator
         script: |
           cd ios
 
-          # Step 1: Find workspace
+          # Find workspace
           WORKSPACE=$(find . -maxdepth 1 -name "*.xcworkspace" | head -1)
           WORKSPACE_NAME=$(basename "$WORKSPACE" .xcworkspace)
           echo "Workspace: $WORKSPACE_NAME"
 
-          # Step 2: List all schemes
-          echo "=== Available schemes ==="
-          xcodebuild -workspace "${WORKSPACE_NAME}.xcworkspace" -list
-
-          # Step 3: Get first scheme
+          # Get scheme
           SCHEME=$(xcodebuild -workspace "${WORKSPACE_NAME}.xcworkspace" -list 2>/dev/null \
             | awk '/Schemes:/,0' | grep -v "Schemes:" | grep -v "^[[:space:]]*$" \
             | head -1 | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')
-          echo "Using scheme: '$SCHEME'"
+          if [ -z "$SCHEME" ]; then SCHEME="$WORKSPACE_NAME"; fi
+          echo "Scheme: $SCHEME"
 
-          # Step 4: Build for simulator - output directly to known folder
-          BUILD_DIR="$(pwd)/SimBuild"
-          mkdir -p "$BUILD_DIR"
+          # Save for next step
+          echo "WORKSPACE_NAME=$WORKSPACE_NAME" >> $CM_ENV
+          echo "SCHEME=$SCHEME" >> $CM_ENV
 
-          echo "=== Building for simulator ==="
+          # Build WITHOUT CONFIGURATION_BUILD_DIR so Xcode uses its default DerivedData
+          # The .app will be in ~/Library/Developer/Xcode/DerivedData/*/Build/Products/
           xcodebuild \
             -workspace "${WORKSPACE_NAME}.xcworkspace" \
             -scheme "$SCHEME" \
-            -sdk iphonesimulator \
             -configuration Debug \
+            -sdk iphonesimulator \
             -destination 'platform=iOS Simulator,OS=18.2,name=iPhone 16' \
-            CONFIGURATION_BUILD_DIR="$BUILD_DIR" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
             SWIFT_TREAT_WARNINGS_AS_ERRORS=NO \
-            GCC_TREAT_WARNINGS_AS_ERRORS=NO
+            GCC_TREAT_WARNINGS_AS_ERRORS=NO \
+            build
 
-          echo "=== Build finished. Listing SimBuild: ==="
-          ls -la "$BUILD_DIR"
+          echo "=== Build done. Searching for .app ==="
+          # Search in Xcode default DerivedData location
+          find ~/Library/Developer/Xcode/DerivedData -name "${WORKSPACE_NAME}.app" \
+            -not -path "*/Intermediates*" 2>/dev/null | head -5
 
-          echo "=== All .app files: ==="
-          find "$BUILD_DIR" -name "*.app" 2>/dev/null
+          find ~/Library/Developer/Xcode/DerivedData -name "*.app" \
+            -not -name "*.appex" \
+            -not -path "*/Intermediates*" \
+            -path "*iphonesimulator*" 2>/dev/null | head -5
 
-          # Step 5: Create IPA
-          APP=$(find "$BUILD_DIR" -name "*.app" | grep -v ".appex" | head -1)
-          echo "App to package: $APP"
+      - name: Create IPA
+        script: |
+          echo "Searching for .app in DerivedData..."
+
+          # Search in default Xcode DerivedData
+          APP=$(find ~/Library/Developer/Xcode/DerivedData \
+            -name "*.app" \
+            -not -name "*.appex" \
+            -not -path "*/Intermediates*" \
+            -path "*iphonesimulator*" \
+            2>/dev/null | head -1)
+
+          echo "Found: $APP"
+
+          # Fallback - search entire DerivedData without simulator filter
+          if [ -z "$APP" ]; then
+            echo "Trying without simulator filter..."
+            APP=$(find ~/Library/Developer/Xcode/DerivedData \
+              -name "*.app" \
+              -not -name "*.appex" \
+              -not -path "*/Intermediates*" \
+              2>/dev/null | head -1)
+            echo "Fallback found: $APP"
+          fi
+
+          # Last resort - search everywhere
+          if [ -z "$APP" ]; then
+            echo "Searching everywhere..."
+            find / -name "MenorahFamilyCamp.app" 2>/dev/null | head -5
+            find / -name "menorahapp.app" 2>/dev/null | head -5
+            find / -name "menorah*.app" -not -name "*.appex" 2>/dev/null | head -5
+            APP=$(find / -name "*.app" -not -name "*.appex" \
+              -not -path "*/Xcode.app/*" \
+              -not -path "*/Applications/*" \
+              -path "*Debug*" 2>/dev/null | head -1)
+            echo "Last resort: $APP"
+          fi
 
           if [ -z "$APP" ]; then
-            echo "ERROR: No .app found in $BUILD_DIR"
-            echo "Full listing:"
-            find "$BUILD_DIR" -maxdepth 5 2>/dev/null
+            echo "Could not find .app anywhere!"
+            echo "DerivedData contents:"
+            ls ~/Library/Developer/Xcode/DerivedData/ 2>/dev/null
             exit 1
           fi
 
-          mkdir -p /tmp/Payload
-          cp -r "$APP" /tmp/Payload/
-          cd /tmp
+          echo "Creating IPA from: $APP"
+          mkdir -p /tmp/IPA/Payload
+          cp -r "$APP" /tmp/IPA/Payload/
+          cd /tmp/IPA
           zip -r ~/menorahapp.ipa Payload/
-          echo "✅ IPA created successfully"
           ls -lh ~/menorahapp.ipa
+          echo "✅ IPA created!"
 
     artifacts:
       - ~/menorahapp.ipa
