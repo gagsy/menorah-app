@@ -7,17 +7,14 @@ workflows:
     scripts:
       - name: Install dependencies
         script: npm install
-
       - name: Build Android APK
         script: |
           npx expo prebuild --platform android --clean
           cd android
           chmod +x ./gradlew
           ./gradlew assembleRelease
-
     artifacts:
       - android/app/build/outputs/apk/release/app-release.apk
-
     publishing:
       email:
         recipients:
@@ -77,8 +74,13 @@ workflows:
           WORKSPACE_NAME=$(basename "$WORKSPACE" .xcworkspace)
           echo "WORKSPACE_NAME=$WORKSPACE_NAME" >> $CM_ENV
           echo "Found workspace: $WORKSPACE_NAME"
-          SCHEME=$(xcodebuild -workspace "$WORKSPACE_NAME.xcworkspace" -list 2>/dev/null \
-            | awk '/Schemes:/,0' | grep -v "Schemes:" | grep -v "^$" | head -1 | tr -d ' \t')
+          SCHEME=$(xcodebuild -workspace "$WORKSPACE_NAME.xcworkspace" \
+            -list 2>/dev/null \
+            | awk '/Schemes:/,0' \
+            | grep -v "Schemes:" \
+            | grep -v "^$" \
+            | head -1 \
+            | tr -d ' \t')
           if [ -z "$SCHEME" ]; then SCHEME="$WORKSPACE_NAME"; fi
           echo "SCHEME=$SCHEME" >> $CM_ENV
           echo "Found scheme: $SCHEME"
@@ -86,16 +88,16 @@ workflows:
       - name: Build iOS Simulator
         script: |
           cd ios
-
-          # Use a local derivedData inside the ios folder
           DERIVED="$(pwd)/build_output"
           echo "DERIVED=$DERIVED" >> $CM_ENV
           mkdir -p "$DERIVED"
 
-          echo "Building workspace=$WORKSPACE_NAME scheme=$SCHEME"
-          echo "Output to: $DERIVED"
+          echo "=== Starting xcodebuild ==="
+          echo "Workspace: ${WORKSPACE_NAME}.xcworkspace"
+          echo "Scheme: $SCHEME"
+          echo "Output: $DERIVED"
 
-          set -o pipefail
+          # Run build and capture exit code
           xcodebuild \
             -workspace "${WORKSPACE_NAME}.xcworkspace" \
             -scheme "$SCHEME" \
@@ -108,45 +110,42 @@ workflows:
             CODE_SIGNING_REQUIRED=NO \
             SWIFT_TREAT_WARNINGS_AS_ERRORS=NO \
             GCC_TREAT_WARNINGS_AS_ERRORS=NO \
-            | xcpretty --color || xcodebuild \
-            -workspace "${WORKSPACE_NAME}.xcworkspace" \
-            -scheme "$SCHEME" \
-            -configuration Debug \
-            -sdk iphonesimulator \
-            -destination 'platform=iOS Simulator,OS=18.2,name=iPhone 16' \
-            -derivedDataPath "$DERIVED" \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGN_IDENTITY="" \
-            CODE_SIGNING_REQUIRED=NO
+            build
+          BUILD_RESULT=$?
 
-          echo "Build complete. Listing output:"
-          find "$DERIVED" -name "*.app" 2>/dev/null | head -10
+          echo "=== Build exit code: $BUILD_RESULT ==="
+          echo "=== Files in build_output: ==="
+          find "$DERIVED" -name "*.app" 2>/dev/null | head -20
+          echo "=== Top level of build_output: ==="
+          ls -la "$DERIVED" 2>/dev/null || echo "build_output is empty or missing"
+          echo "=== Build/Products: ==="
+          ls -la "$DERIVED/Build/Products/" 2>/dev/null || echo "No Build/Products folder"
+
+          if [ $BUILD_RESULT -ne 0 ]; then
+            echo "BUILD FAILED with code $BUILD_RESULT"
+            exit $BUILD_RESULT
+          fi
 
       - name: Create IPA
         script: |
-          cd ios
-          echo "Searching in: $DERIVED"
+          echo "=== Finding .app ==="
+          echo "DERIVED path: $DERIVED"
+          find "$DERIVED" -name "*.app" 2>/dev/null | grep -v ".appex"
 
-          # Find .app - search multiple possible locations
-          APP=$(find "$DERIVED" -name "*.app" 2>/dev/null \
+          APP=$(find "$DERIVED/Build/Products" -name "*.app" 2>/dev/null \
             | grep -v ".appex" \
-            | grep -v "Intermediates" \
             | head -1)
 
-          echo "Found: $APP"
-
           if [ -z "$APP" ]; then
-            echo "Searching entire build directory..."
-            find /Users/builder/clone/ios -name "*.app" 2>/dev/null | grep -v ".appex" | head -10
-            APP=$(find /Users/builder/clone/ios -name "*.app" 2>/dev/null \
-              | grep -v ".appex" | head -1)
-            echo "Found: $APP"
+            APP=$(find "$DERIVED" -name "*.app" 2>/dev/null \
+              | grep -v ".appex" \
+              | head -1)
           fi
 
+          echo "Using app: $APP"
+
           if [ -z "$APP" ]; then
-            echo "No .app found anywhere. Build may have failed."
-            echo "Checking build logs..."
-            find /Users/builder/clone -name "*.log" 2>/dev/null | head -5
+            echo "No .app found!"
             exit 1
           fi
 
@@ -154,8 +153,8 @@ workflows:
           cp -r "$APP" /tmp/IPA/Payload/
           cd /tmp/IPA
           zip -r ~/menorahapp.ipa Payload/
-          echo "✅ IPA created"
           ls -lh ~/menorahapp.ipa
+          echo "✅ IPA created"
 
     artifacts:
       - ~/menorahapp.ipa
