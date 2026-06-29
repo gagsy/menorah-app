@@ -1,21 +1,33 @@
 {
   "expo": {
-    "name": "menorah-app",
+    "name": "Menorah Family Camp",
     "slug": "menorah-app",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/images/icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#F3EEFA"
+    },
+    "assetBundlePatterns": ["**/*"],
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.gagsy.menorahapp"
     },
     "android": {
+      "package": "com.gagsy.menorahapp",
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/images/icon.png"
+        "foregroundImage": "./assets/images/icon.png",
+        "monochromeImage": "./assets/images/icon.png",
+        "backgroundColor": "#6E3FA3"
       },
-      "package": "com.gagsy.menorahapp"
+      "softwareKeyboardLayoutMode": "pan",
+      "navigationBar": {
+        "backgroundColor": "#FFFFFF",
+        "barStyle": "dark-content"
+      }
     },
     "plugins": [
       [

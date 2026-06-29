@@ -9,11 +9,54 @@ import { LinearGradient } from 'expo-linear-gradient';
 import QRCode from 'react-native-qrcode-svg';
 import { Colors } from '../constants/Colors';
 import TabBar from '../components/TabBar';
-import {
-  requestSMSPermission,
-  detectUPIPaymentFromSMS,
-  parseUTRFromSMS,
-} from '../services/UPIPaymentDetector';
+// ── Inline SMS detection (no external file needed) ───────────────────────────
+async function requestSMSPermission() {
+  if (require('react-native').Platform.OS !== 'android') return false;
+  try {
+    const { PermissionsAndroid } = require('react-native');
+    const r = await PermissionsAndroid.request(
+      PermissionsAndroid.PERMISSIONS.READ_SMS,
+      { title: 'SMS Permission', message: 'To auto-detect UPI payment from bank SMS.', buttonPositive: 'Allow', buttonNegative: 'Deny' }
+    );
+    return r === PermissionsAndroid.RESULTS.GRANTED;
+  } catch (_) { return false; }
+}
+
+function parseUTRFromSMS(sms) {
+  if (!sms) return null;
+  const patterns = [
+    /UPI Ref[:\s#.]*([A-Z0-9]{10,22})/i,
+    /UTR[:\s#.]*([A-Z0-9]{10,22})/i,
+    /Ref[.\s]?No[:\s#.]*([A-Z0-9]{10,22})/i,
+    /Transaction[.\s]?ID[:\s#.]*([A-Z0-9]{10,22})/i,
+    /RRN[:\s#.]*([0-9]{12})/i,
+  ];
+  for (const p of patterns) {
+    const m = sms.match(p);
+    if (m && m[1] && m[1].length >= 10) return m[1].trim().toUpperCase();
+  }
+  return null;
+}
+
+async function detectUPIPaymentFromSMS(expectedAmount, timeoutMs = 90000) {
+  if (require('react-native').Platform.OS !== 'android') return null;
+  try {
+    const SmsRetriever = require('react-native-sms-retriever');
+    const started = await SmsRetriever.startSmsRetriever();
+    if (!started) return null;
+    return new Promise((resolve) => {
+      const t = setTimeout(() => { try { SmsRetriever.removeSmsListener(); } catch(_){} resolve(null); }, timeoutMs);
+      SmsRetriever.addSmsListener((event) => {
+        clearTimeout(t);
+        try { SmsRetriever.removeSmsListener(); } catch(_){}
+        const sms = event && event.message;
+        if (!sms) { resolve(null); return; }
+        const utr = parseUTRFromSMS(sms);
+        if (utr) { resolve({ utr, smsBody: sms }); } else { resolve(null); }
+      });
+    });
+  } catch (_) { return null; }
+}
 
 const { width } = Dimensions.get('window');
 
