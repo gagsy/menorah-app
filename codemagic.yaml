@@ -86,64 +86,79 @@ workflows:
       - name: Build iOS Simulator
         script: |
           cd ios
-          echo "Building workspace=$WORKSPACE_NAME scheme=$SCHEME"
 
+          # Use a local derivedData inside the ios folder
+          DERIVED="$(pwd)/build_output"
+          echo "DERIVED=$DERIVED" >> $CM_ENV
+          mkdir -p "$DERIVED"
+
+          echo "Building workspace=$WORKSPACE_NAME scheme=$SCHEME"
+          echo "Output to: $DERIVED"
+
+          set -o pipefail
           xcodebuild \
             -workspace "${WORKSPACE_NAME}.xcworkspace" \
             -scheme "$SCHEME" \
             -configuration Debug \
             -sdk iphonesimulator \
             -destination 'platform=iOS Simulator,OS=18.2,name=iPhone 16' \
-            -derivedDataPath "$CM_BUILD_DIR/DerivedData" \
+            -derivedDataPath "$DERIVED" \
             CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
             SWIFT_TREAT_WARNINGS_AS_ERRORS=NO \
             GCC_TREAT_WARNINGS_AS_ERRORS=NO \
-            build
+            | xcpretty --color || xcodebuild \
+            -workspace "${WORKSPACE_NAME}.xcworkspace" \
+            -scheme "$SCHEME" \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination 'platform=iOS Simulator,OS=18.2,name=iPhone 16' \
+            -derivedDataPath "$DERIVED" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO
 
-          # Save derived data path for next step
-          echo "DERIVED_DATA=$CM_BUILD_DIR/DerivedData" >> $CM_ENV
+          echo "Build complete. Listing output:"
+          find "$DERIVED" -name "*.app" 2>/dev/null | head -10
 
       - name: Create IPA
         script: |
-          echo "Searching for .app in: $DERIVED_DATA"
+          cd ios
+          echo "Searching in: $DERIVED"
 
-          # List everything to debug
-          find "$DERIVED_DATA" -name "*.app" 2>/dev/null | grep -v ".appex" | head -10
-
-          # Find the main app (not extensions)
-          APP=$(find "$DERIVED_DATA" -name "*.app" 2>/dev/null \
+          # Find .app - search multiple possible locations
+          APP=$(find "$DERIVED" -name "*.app" 2>/dev/null \
             | grep -v ".appex" \
             | grep -v "Intermediates" \
-            | grep "Debug-iphonesimulator" \
             | head -1)
 
-          echo "Found app: $APP"
+          echo "Found: $APP"
 
-          # Fallback - search everywhere
           if [ -z "$APP" ]; then
-            echo "Trying broader search..."
-            APP=$(find "$DERIVED_DATA" -name "*.app" 2>/dev/null \
-              | grep -v ".appex" \
-              | head -1)
-            echo "Fallback app: $APP"
+            echo "Searching entire build directory..."
+            find /Users/builder/clone/ios -name "*.app" 2>/dev/null | grep -v ".appex" | head -10
+            APP=$(find /Users/builder/clone/ios -name "*.app" 2>/dev/null \
+              | grep -v ".appex" | head -1)
+            echo "Found: $APP"
           fi
 
           if [ -z "$APP" ]; then
-            echo "Still no .app found. Full DerivedData structure:"
-            find "$DERIVED_DATA" -maxdepth 5 -type d 2>/dev/null | head -30
+            echo "No .app found anywhere. Build may have failed."
+            echo "Checking build logs..."
+            find /Users/builder/clone -name "*.log" 2>/dev/null | head -5
             exit 1
           fi
 
-          # Create IPA
-          mkdir -p /tmp/Payload
-          cp -r "$APP" /tmp/Payload/
-          cd /tmp
-          zip -r "$CM_BUILD_DIR/menorahapp.ipa" Payload/
-          echo "✅ IPA created: $CM_BUILD_DIR/menorahapp.ipa"
-          ls -lh "$CM_BUILD_DIR/menorahapp.ipa"
+          mkdir -p /tmp/IPA/Payload
+          cp -r "$APP" /tmp/IPA/Payload/
+          cd /tmp/IPA
+          zip -r ~/menorahapp.ipa Payload/
+          echo "✅ IPA created"
+          ls -lh ~/menorahapp.ipa
 
     artifacts:
-      - menorahapp.ipa
+      - ~/menorahapp.ipa
 
     publishing:
       email:
