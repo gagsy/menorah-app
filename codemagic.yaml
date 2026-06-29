@@ -7,15 +7,17 @@ workflows:
     scripts:
       - name: Install dependencies
         script: npm install
-      - name: Install Expo CLI
-        script: npm install -g expo-cli eas-cli
+
       - name: Build Android APK
         script: |
-          npx expo prebuild --platform android
+          npx expo prebuild --platform android --clean
           cd android
+          chmod +x ./gradlew
           ./gradlew assembleRelease
+
     artifacts:
       - android/app/build/outputs/apk/release/app-release.apk
+
     publishing:
       email:
         recipients:
@@ -23,39 +25,69 @@ workflows:
 
   ios-build:
     name: iOS IPA Build
-    max_build_duration: 60
+    max_build_duration: 90
     environment:
       node: 18
-      xcode: latest
+      xcode: 16.2
       cocoapods: default
+
     scripts:
       - name: Install dependencies
         script: npm install
-      - name: Install Expo CLI
-        script: npm install -g expo-cli
+
       - name: Prebuild iOS
-        script: npx expo prebuild --platform ios
+        script: npx expo prebuild --platform ios --clean
+
+      - name: Fix Podfile for Google Sign-In
+        script: |
+          cd ios
+          # Fix AppCheckCore Swift pod issue with modular headers
+          sed -i '' "s/# Pods for menorahapp/use_modular_headers!\n  # Pods for menorahapp/" Podfile || true
+
+          # Add post_install fix
+          cat >> Podfile << 'PODEOF'
+
+          post_install do |installer|
+            installer.pods_project.targets.each do |target|
+              target.build_configurations.each do |config|
+                config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.1'
+                config.build_settings['BUILD_LIBRARY_FOR_DISTRIBUTION'] = 'YES'
+              end
+            end
+          end
+          PODEOF
+
       - name: Install CocoaPods
         script: |
           cd ios
-          pod install
-      - name: Build iOS IPA
+          pod install --repo-update
+
+      - name: Build iOS Simulator IPA
         script: |
+          cd ios
           xcodebuild \
-            -workspace ios/menorahapp.xcworkspace \
+            -workspace menorahapp.xcworkspace \
             -scheme menorahapp \
-            -configuration Release \
-            -archivePath ios/build/menorahapp.xcarchive \
-            -destination "generic/platform=iOS Simulator" \
-            archive
-          xcodebuild \
-            -exportArchive \
-            -archivePath ios/build/menorahapp.xcarchive \
-            -exportPath ios/build \
-            -exportOptionsPlist ios/exportOptions.plist
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination 'platform=iOS Simulator,name=iPhone 15' \
+            -derivedDataPath DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Create IPA from simulator build
+        script: |
+          cd ios
+          APP=$(find DerivedData -name "*.app" | head -1)
+          mkdir -p Payload
+          cp -r "$APP" Payload/
+          zip -r menorahapp.ipa Payload/
+          echo "IPA created: menorahapp.ipa"
+
     artifacts:
-      - ios/build/*.ipa
-      - ios/build/*.app
+      - ios/menorahapp.ipa
+      - ios/DerivedData/Build/Products/**/*.app
+
     publishing:
       email:
         recipients:
