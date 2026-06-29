@@ -44,11 +44,9 @@ workflows:
           if ! grep -q "use_modular_headers!" Podfile; then
             sed -i '' '1s/^/use_modular_headers!\n/' Podfile
           fi
-
           python3 << 'PYEOF'
           with open('Podfile', 'r') as f:
               content = f.read()
-
           inject = """
               installer.pods_project.targets.each do |target|
                 target.build_configurations.each do |config|
@@ -57,19 +55,14 @@ workflows:
                 end
               end
           """
-
           if 'post_install do |installer|' in content:
-              content = content.replace(
-                  'post_install do |installer|',
-                  'post_install do |installer|' + inject,
-                  1
-              )
+              content = content.replace('post_install do |installer|',
+                  'post_install do |installer|' + inject, 1)
           else:
               content += '\npost_install do |installer|\n' + inject + '\nend\n'
-
           with open('Podfile', 'w') as f:
               f.write(content)
-          print("Podfile updated successfully")
+          print("Podfile updated")
           PYEOF
 
       - name: Install CocoaPods
@@ -77,80 +70,80 @@ workflows:
           cd ios
           pod install --repo-update
 
-      - name: Find workspace name and scheme
+      - name: Find workspace and scheme
         script: |
           cd ios
-
-          # Find actual workspace name
           WORKSPACE=$(find . -maxdepth 1 -name "*.xcworkspace" | head -1)
           WORKSPACE_NAME=$(basename "$WORKSPACE" .xcworkspace)
           echo "WORKSPACE_NAME=$WORKSPACE_NAME" >> $CM_ENV
           echo "Found workspace: $WORKSPACE_NAME"
-
-          # Find scheme - use workspace name as default
           SCHEME=$(xcodebuild -workspace "$WORKSPACE_NAME.xcworkspace" -list 2>/dev/null \
             | awk '/Schemes:/,0' | grep -v "Schemes:" | grep -v "^$" | head -1 | tr -d ' \t')
-
-          if [ -z "$SCHEME" ]; then
-            SCHEME="$WORKSPACE_NAME"
-          fi
+          if [ -z "$SCHEME" ]; then SCHEME="$WORKSPACE_NAME"; fi
           echo "SCHEME=$SCHEME" >> $CM_ENV
           echo "Found scheme: $SCHEME"
 
       - name: Build iOS Simulator
         script: |
           cd ios
-          echo "Building: workspace=$WORKSPACE_NAME scheme=$SCHEME"
+          echo "Building workspace=$WORKSPACE_NAME scheme=$SCHEME"
 
-          # Use iPhone 16 (available on Xcode 16.2 / iOS 18.2)
           xcodebuild \
             -workspace "${WORKSPACE_NAME}.xcworkspace" \
             -scheme "$SCHEME" \
             -configuration Debug \
             -sdk iphonesimulator \
             -destination 'platform=iOS Simulator,OS=18.2,name=iPhone 16' \
-            -derivedDataPath DerivedData \
+            -derivedDataPath "$CM_BUILD_DIR/DerivedData" \
             CODE_SIGNING_ALLOWED=NO \
             SWIFT_TREAT_WARNINGS_AS_ERRORS=NO \
             GCC_TREAT_WARNINGS_AS_ERRORS=NO \
-            build 2>&1 | tee build.log | tail -50
+            build
 
-          # Check if build succeeded
-          if grep -q "BUILD SUCCEEDED" build.log; then
-            echo "✅ Build succeeded!"
-          else
-            echo "❌ Build failed - last 20 lines:"
-            tail -20 build.log
-            exit 1
-          fi
+          # Save derived data path for next step
+          echo "DERIVED_DATA=$CM_BUILD_DIR/DerivedData" >> $CM_ENV
 
       - name: Create IPA
         script: |
-          cd ios
-          echo "Looking for .app file..."
-          find DerivedData -name "*.app" 2>/dev/null | head -5
+          echo "Searching for .app in: $DERIVED_DATA"
 
-          APP=$(find DerivedData -name "*.app" \
-            -not -path "*/Build/Intermediates*" \
-            -not -name "*.appex" \
+          # List everything to debug
+          find "$DERIVED_DATA" -name "*.app" 2>/dev/null | grep -v ".appex" | head -10
+
+          # Find the main app (not extensions)
+          APP=$(find "$DERIVED_DATA" -name "*.app" 2>/dev/null \
+            | grep -v ".appex" \
+            | grep -v "Intermediates" \
+            | grep "Debug-iphonesimulator" \
             | head -1)
 
-          echo "Using: $APP"
+          echo "Found app: $APP"
+
+          # Fallback - search everywhere
+          if [ -z "$APP" ]; then
+            echo "Trying broader search..."
+            APP=$(find "$DERIVED_DATA" -name "*.app" 2>/dev/null \
+              | grep -v ".appex" \
+              | head -1)
+            echo "Fallback app: $APP"
+          fi
 
           if [ -z "$APP" ]; then
-            echo "No .app found!"
+            echo "Still no .app found. Full DerivedData structure:"
+            find "$DERIVED_DATA" -maxdepth 5 -type d 2>/dev/null | head -30
             exit 1
           fi
 
-          mkdir -p Payload
-          cp -r "$APP" Payload/
-          zip -r menorahapp.ipa Payload/
-          ls -lh menorahapp.ipa
-          echo "✅ IPA created successfully"
+          # Create IPA
+          mkdir -p /tmp/Payload
+          cp -r "$APP" /tmp/Payload/
+          cd /tmp
+          zip -r "$CM_BUILD_DIR/menorahapp.ipa" Payload/
+          echo "✅ IPA created: $CM_BUILD_DIR/menorahapp.ipa"
+          ls -lh "$CM_BUILD_DIR/menorahapp.ipa"
 
     artifacts:
-      - ios/menorahapp.ipa
-      - ios/build.log
+      - menorahapp.ipa
 
     publishing:
       email:
