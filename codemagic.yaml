@@ -41,26 +41,16 @@ workflows:
       - name: Fix Podfile - merge post_install hooks
         script: |
           cd ios
-          # Read current Podfile
-          PODFILE="Podfile"
-
-          # Add use_modular_headers! if not already present
-          if ! grep -q "use_modular_headers!" "$PODFILE"; then
-            sed -i '' '1s/^/use_modular_headers!\n/' "$PODFILE"
-            echo "Added use_modular_headers!"
+          # Add use_modular_headers! if not present
+          if ! grep -q "use_modular_headers!" Podfile; then
+            sed -i '' '1s/^/use_modular_headers!\n/' Podfile
           fi
 
-          # Instead of adding a new post_install hook, we EDIT the existing one
-          # by inserting our lines INSIDE the existing post_install block
           python3 << 'PYEOF'
-          import re
-
           with open('Podfile', 'r') as f:
               content = f.read()
 
-          # Lines to inject inside existing post_install
           inject = """
-              # Fix for AppCheckCore Swift pod issue
               installer.pods_project.targets.each do |target|
                 target.build_configurations.each do |config|
                   config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.1'
@@ -69,40 +59,51 @@ workflows:
               end
           """
 
-          # Find existing post_install and inject inside it
           if 'post_install do |installer|' in content:
-              # Already has post_install - inject our lines inside it
               content = content.replace(
                   'post_install do |installer|',
                   'post_install do |installer|' + inject,
-                  1  # only replace first occurrence
+                  1
               )
-              print("Injected into existing post_install hook")
           else:
-              # No post_install exists - add one at the end
               content += '\npost_install do |installer|\n' + inject + '\nend\n'
-              print("Added new post_install hook")
 
           with open('Podfile', 'w') as f:
               f.write(content)
-
-          print("Podfile updated successfully")
+          print("Podfile updated")
           PYEOF
-
-          echo "Podfile contents:"
-          cat Podfile
 
       - name: Install CocoaPods
         script: |
           cd ios
           pod install --repo-update
 
-      - name: Build iOS Simulator
+      - name: Find workspace and build
         script: |
           cd ios
+
+          # Find the actual .xcworkspace name
+          WORKSPACE=$(find . -name "*.xcworkspace" -maxdepth 1 | head -1)
+          echo "Found workspace: $WORKSPACE"
+
+          # Get just the name without path and extension
+          WORKSPACE_NAME=$(basename "$WORKSPACE" .xcworkspace)
+          echo "Workspace name: $WORKSPACE_NAME"
+
+          # Find scheme
+          SCHEME=$(xcodebuild -workspace "$WORKSPACE" -list 2>/dev/null | grep -A5 "Schemes:" | grep -v "Schemes:" | head -1 | tr -d ' ')
+          echo "Found scheme: $SCHEME"
+
+          # Use workspace name as scheme if scheme detection fails
+          if [ -z "$SCHEME" ]; then
+            SCHEME="$WORKSPACE_NAME"
+          fi
+
+          echo "Building: workspace=$WORKSPACE_NAME scheme=$SCHEME"
+
           xcodebuild \
-            -workspace menorahapp.xcworkspace \
-            -scheme menorahapp \
+            -workspace "${WORKSPACE_NAME}.xcworkspace" \
+            -scheme "$SCHEME" \
             -configuration Debug \
             -sdk iphonesimulator \
             -destination 'platform=iOS Simulator,name=iPhone 15' \
@@ -115,10 +116,15 @@ workflows:
           cd ios
           APP=$(find DerivedData -name "*.app" -not -path "*/Build/Intermediates*" | head -1)
           echo "Found app: $APP"
+          if [ -z "$APP" ]; then
+            echo "No .app found, listing DerivedData:"
+            find DerivedData -name "*.app" 2>/dev/null || echo "DerivedData empty"
+            exit 1
+          fi
           mkdir -p Payload
           cp -r "$APP" Payload/
           zip -r menorahapp.ipa Payload/
-          echo "IPA created successfully"
+          echo "IPA created"
 
     artifacts:
       - ios/menorahapp.ipa
