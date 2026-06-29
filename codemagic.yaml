@@ -76,19 +76,34 @@ workflows:
           WORKSPACE_NAME=$(basename "$WORKSPACE" .xcworkspace)
           echo "Workspace: $WORKSPACE_NAME"
 
-          # Get scheme
-          SCHEME=$(xcodebuild -workspace "${WORKSPACE_NAME}.xcworkspace" -list 2>/dev/null \
-            | awk '/Schemes:/,0' | grep -v "Schemes:" | grep -v "^[[:space:]]*$" \
-            | head -1 | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')
-          if [ -z "$SCHEME" ]; then SCHEME="$WORKSPACE_NAME"; fi
-          echo "Scheme: $SCHEME"
+          # List ALL schemes so we can see what's available
+          echo "=== ALL SCHEMES ==="
+          xcodebuild -workspace "${WORKSPACE_NAME}.xcworkspace" -list 2>&1
 
-          # Save for next step
+          # Get the MAIN app scheme - skip Pods schemes
+          # The main scheme should match the workspace/app name
+          SCHEME=$(xcodebuild -workspace "${WORKSPACE_NAME}.xcworkspace" -list 2>/dev/null \
+            | awk '/Schemes:/,0' \
+            | grep -v "Schemes:" \
+            | grep -v "^[[:space:]]*$" \
+            | grep -v "Pods-" \
+            | grep -v "AppAuth" \
+            | grep -v "React" \
+            | grep -v "RN" \
+            | grep -v "Expo" \
+            | head -1 \
+            | sed 's/^[[:space:]]*//' \
+            | sed 's/[[:space:]]*$//')
+
+          if [ -z "$SCHEME" ]; then
+            SCHEME="$WORKSPACE_NAME"
+          fi
+
+          echo "Using scheme: '$SCHEME'"
           echo "WORKSPACE_NAME=$WORKSPACE_NAME" >> $CM_ENV
           echo "SCHEME=$SCHEME" >> $CM_ENV
 
-          # Build WITHOUT CONFIGURATION_BUILD_DIR so Xcode uses its default DerivedData
-          # The .app will be in ~/Library/Developer/Xcode/DerivedData/*/Build/Products/
+          # Build the main app
           xcodebuild \
             -workspace "${WORKSPACE_NAME}.xcworkspace" \
             -scheme "$SCHEME" \
@@ -100,60 +115,52 @@ workflows:
             CODE_SIGNING_REQUIRED=NO \
             SWIFT_TREAT_WARNINGS_AS_ERRORS=NO \
             GCC_TREAT_WARNINGS_AS_ERRORS=NO \
-            build
+            build 2>&1 | tail -20
 
-          echo "=== Build done. Searching for .app ==="
-          # Search in Xcode default DerivedData location
-          find ~/Library/Developer/Xcode/DerivedData -name "${WORKSPACE_NAME}.app" \
-            -not -path "*/Intermediates*" 2>/dev/null | head -5
+          echo "=== Searching for .app ==="
+          DERIVED_BASE=~/Library/Developer/Xcode/DerivedData
 
-          find ~/Library/Developer/Xcode/DerivedData -name "*.app" \
-            -not -name "*.appex" \
-            -not -path "*/Intermediates*" \
-            -path "*iphonesimulator*" 2>/dev/null | head -5
+          # List the DerivedData folder for our app
+          echo "DerivedData contents:"
+          ls "$DERIVED_BASE/" 2>/dev/null
 
-      - name: Create IPA
-        script: |
-          echo "Searching for .app in DerivedData..."
+          # Find Build/Products folder
+          echo "Build Products:"
+          find "$DERIVED_BASE/${WORKSPACE_NAME}-"* -name "Products" -type d 2>/dev/null | head -3
 
-          # Search in default Xcode DerivedData
-          APP=$(find ~/Library/Developer/Xcode/DerivedData \
+          # Find .app
+          find "$DERIVED_BASE" \
             -name "*.app" \
             -not -name "*.appex" \
             -not -path "*/Intermediates*" \
-            -path "*iphonesimulator*" \
+            2>/dev/null | head -10
+
+      - name: Create IPA
+        script: |
+          DERIVED_BASE=~/Library/Developer/Xcode/DerivedData
+
+          # Find .app in DerivedData - look in Products folder
+          APP=$(find "$DERIVED_BASE" \
+            -path "*/Products/Debug-iphonesimulator/*.app" \
+            -not -name "*.appex" \
             2>/dev/null | head -1)
 
-          echo "Found: $APP"
+          echo "Found in Products: $APP"
 
-          # Fallback - search entire DerivedData without simulator filter
+          # Fallback
           if [ -z "$APP" ]; then
-            echo "Trying without simulator filter..."
-            APP=$(find ~/Library/Developer/Xcode/DerivedData \
+            APP=$(find "$DERIVED_BASE" \
               -name "*.app" \
               -not -name "*.appex" \
               -not -path "*/Intermediates*" \
               2>/dev/null | head -1)
-            echo "Fallback found: $APP"
-          fi
-
-          # Last resort - search everywhere
-          if [ -z "$APP" ]; then
-            echo "Searching everywhere..."
-            find / -name "MenorahFamilyCamp.app" 2>/dev/null | head -5
-            find / -name "menorahapp.app" 2>/dev/null | head -5
-            find / -name "menorah*.app" -not -name "*.appex" 2>/dev/null | head -5
-            APP=$(find / -name "*.app" -not -name "*.appex" \
-              -not -path "*/Xcode.app/*" \
-              -not -path "*/Applications/*" \
-              -path "*Debug*" 2>/dev/null | head -1)
-            echo "Last resort: $APP"
+            echo "Fallback: $APP"
           fi
 
           if [ -z "$APP" ]; then
-            echo "Could not find .app anywhere!"
-            echo "DerivedData contents:"
-            ls ~/Library/Developer/Xcode/DerivedData/ 2>/dev/null
+            echo "No .app found. DerivedData structure:"
+            find "$DERIVED_BASE/${SCHEME_NAME:-MenorahFamilyCamp}"* \
+              -maxdepth 6 -type d 2>/dev/null | head -20
             exit 1
           fi
 
