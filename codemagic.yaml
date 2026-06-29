@@ -38,10 +38,9 @@ workflows:
       - name: Prebuild iOS
         script: npx expo prebuild --platform ios --clean
 
-      - name: Fix Podfile - merge post_install hooks
+      - name: Fix Podfile
         script: |
           cd ios
-          # Add use_modular_headers! if not present
           if ! grep -q "use_modular_headers!" Podfile; then
             sed -i '' '1s/^/use_modular_headers!\n/' Podfile
           fi
@@ -70,7 +69,7 @@ workflows:
 
           with open('Podfile', 'w') as f:
               f.write(content)
-          print("Podfile updated")
+          print("Podfile updated successfully")
           PYEOF
 
       - name: Install CocoaPods
@@ -78,56 +77,80 @@ workflows:
           cd ios
           pod install --repo-update
 
-      - name: Find workspace and build
+      - name: Find workspace name and scheme
         script: |
           cd ios
 
-          # Find the actual .xcworkspace name
-          WORKSPACE=$(find . -name "*.xcworkspace" -maxdepth 1 | head -1)
-          echo "Found workspace: $WORKSPACE"
-
-          # Get just the name without path and extension
+          # Find actual workspace name
+          WORKSPACE=$(find . -maxdepth 1 -name "*.xcworkspace" | head -1)
           WORKSPACE_NAME=$(basename "$WORKSPACE" .xcworkspace)
-          echo "Workspace name: $WORKSPACE_NAME"
+          echo "WORKSPACE_NAME=$WORKSPACE_NAME" >> $CM_ENV
+          echo "Found workspace: $WORKSPACE_NAME"
 
-          # Find scheme
-          SCHEME=$(xcodebuild -workspace "$WORKSPACE" -list 2>/dev/null | grep -A5 "Schemes:" | grep -v "Schemes:" | head -1 | tr -d ' ')
-          echo "Found scheme: $SCHEME"
+          # Find scheme - use workspace name as default
+          SCHEME=$(xcodebuild -workspace "$WORKSPACE_NAME.xcworkspace" -list 2>/dev/null \
+            | awk '/Schemes:/,0' | grep -v "Schemes:" | grep -v "^$" | head -1 | tr -d ' \t')
 
-          # Use workspace name as scheme if scheme detection fails
           if [ -z "$SCHEME" ]; then
             SCHEME="$WORKSPACE_NAME"
           fi
+          echo "SCHEME=$SCHEME" >> $CM_ENV
+          echo "Found scheme: $SCHEME"
 
+      - name: Build iOS Simulator
+        script: |
+          cd ios
           echo "Building: workspace=$WORKSPACE_NAME scheme=$SCHEME"
 
+          # Use iPhone 16 (available on Xcode 16.2 / iOS 18.2)
           xcodebuild \
             -workspace "${WORKSPACE_NAME}.xcworkspace" \
             -scheme "$SCHEME" \
             -configuration Debug \
             -sdk iphonesimulator \
-            -destination 'platform=iOS Simulator,name=iPhone 15' \
+            -destination 'platform=iOS Simulator,OS=18.2,name=iPhone 16' \
             -derivedDataPath DerivedData \
             CODE_SIGNING_ALLOWED=NO \
-            build
+            SWIFT_TREAT_WARNINGS_AS_ERRORS=NO \
+            GCC_TREAT_WARNINGS_AS_ERRORS=NO \
+            build 2>&1 | tee build.log | tail -50
+
+          # Check if build succeeded
+          if grep -q "BUILD SUCCEEDED" build.log; then
+            echo "✅ Build succeeded!"
+          else
+            echo "❌ Build failed - last 20 lines:"
+            tail -20 build.log
+            exit 1
+          fi
 
       - name: Create IPA
         script: |
           cd ios
-          APP=$(find DerivedData -name "*.app" -not -path "*/Build/Intermediates*" | head -1)
-          echo "Found app: $APP"
+          echo "Looking for .app file..."
+          find DerivedData -name "*.app" 2>/dev/null | head -5
+
+          APP=$(find DerivedData -name "*.app" \
+            -not -path "*/Build/Intermediates*" \
+            -not -name "*.appex" \
+            | head -1)
+
+          echo "Using: $APP"
+
           if [ -z "$APP" ]; then
-            echo "No .app found, listing DerivedData:"
-            find DerivedData -name "*.app" 2>/dev/null || echo "DerivedData empty"
+            echo "No .app found!"
             exit 1
           fi
+
           mkdir -p Payload
           cp -r "$APP" Payload/
           zip -r menorahapp.ipa Payload/
-          echo "IPA created"
+          ls -lh menorahapp.ipa
+          echo "✅ IPA created successfully"
 
     artifacts:
       - ios/menorahapp.ipa
+      - ios/build.log
 
     publishing:
       email:
