@@ -1,0 +1,62 @@
+workflows:
+  android-build:
+    name: Android APK Build
+    max_build_duration: 60
+    environment:
+      node: 18
+    scripts:
+      - name: Install dependencies
+        script: npm install
+      - name: Install Expo CLI
+        script: npm install -g expo-cli eas-cli
+      - name: Build Android APK
+        script: |
+          npx expo prebuild --platform android
+          cd android
+          ./gradlew assembleRelease
+    artifacts:
+      - android/app/build/outputs/apk/release/app-release.apk
+    publishing:
+      email:
+        recipients:
+          - AJAYDANIELKALE@GMAIL.COM
+
+  ios-build:
+    name: iOS IPA Build
+    max_build_duration: 60
+    environment:
+      node: 18
+      xcode: latest
+      cocoapods: default
+    scripts:
+      - name: Install dependencies
+        script: npm install
+      - name: Install Expo CLI
+        script: npm install -g expo-cli
+      - name: Prebuild iOS
+        script: npx expo prebuild --platform ios
+      - name: Install CocoaPods
+        script: |
+          cd ios
+          pod install
+      - name: Build iOS IPA
+        script: |
+          xcodebuild \
+            -workspace ios/menorahapp.xcworkspace \
+            -scheme menorahapp \
+            -configuration Release \
+            -archivePath ios/build/menorahapp.xcarchive \
+            -destination "generic/platform=iOS Simulator" \
+            archive
+          xcodebuild \
+            -exportArchive \
+            -archivePath ios/build/menorahapp.xcarchive \
+            -exportPath ios/build \
+            -exportOptionsPlist ios/exportOptions.plist
+    artifacts:
+      - ios/build/*.ipa
+      - ios/build/*.app
+    publishing:
+      email:
+        recipients:
+          - AJAYDANIELKALE@GMAIL.COM
