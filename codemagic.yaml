@@ -67,94 +67,66 @@ workflows:
           cd ios
           pod install --repo-update
 
-      - name: Find workspace and scheme
+      - name: Build and package iOS
         script: |
           cd ios
+
+          # Step 1: Find workspace
           WORKSPACE=$(find . -maxdepth 1 -name "*.xcworkspace" | head -1)
           WORKSPACE_NAME=$(basename "$WORKSPACE" .xcworkspace)
-          echo "WORKSPACE_NAME=$WORKSPACE_NAME" >> $CM_ENV
-          echo "Found workspace: $WORKSPACE_NAME"
-          SCHEME=$(xcodebuild -workspace "$WORKSPACE_NAME.xcworkspace" \
-            -list 2>/dev/null \
-            | awk '/Schemes:/,0' \
-            | grep -v "Schemes:" \
-            | grep -v "^$" \
-            | head -1 \
-            | tr -d ' \t')
-          if [ -z "$SCHEME" ]; then SCHEME="$WORKSPACE_NAME"; fi
-          echo "SCHEME=$SCHEME" >> $CM_ENV
-          echo "Found scheme: $SCHEME"
+          echo "Workspace: $WORKSPACE_NAME"
 
-      - name: Build iOS Simulator
-        script: |
-          cd ios
-          DERIVED="$(pwd)/build_output"
-          echo "DERIVED=$DERIVED" >> $CM_ENV
-          mkdir -p "$DERIVED"
+          # Step 2: List all schemes
+          echo "=== Available schemes ==="
+          xcodebuild -workspace "${WORKSPACE_NAME}.xcworkspace" -list
 
-          echo "=== Starting xcodebuild ==="
-          echo "Workspace: ${WORKSPACE_NAME}.xcworkspace"
-          echo "Scheme: $SCHEME"
-          echo "Output: $DERIVED"
+          # Step 3: Get first scheme
+          SCHEME=$(xcodebuild -workspace "${WORKSPACE_NAME}.xcworkspace" -list 2>/dev/null \
+            | awk '/Schemes:/,0' | grep -v "Schemes:" | grep -v "^[[:space:]]*$" \
+            | head -1 | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')
+          echo "Using scheme: '$SCHEME'"
 
-          # Run build and capture exit code
+          # Step 4: Build for simulator - output directly to known folder
+          BUILD_DIR="$(pwd)/SimBuild"
+          mkdir -p "$BUILD_DIR"
+
+          echo "=== Building for simulator ==="
           xcodebuild \
             -workspace "${WORKSPACE_NAME}.xcworkspace" \
             -scheme "$SCHEME" \
-            -configuration Debug \
             -sdk iphonesimulator \
+            -configuration Debug \
             -destination 'platform=iOS Simulator,OS=18.2,name=iPhone 16' \
-            -derivedDataPath "$DERIVED" \
+            CONFIGURATION_BUILD_DIR="$BUILD_DIR" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
             SWIFT_TREAT_WARNINGS_AS_ERRORS=NO \
-            GCC_TREAT_WARNINGS_AS_ERRORS=NO \
-            build
-          BUILD_RESULT=$?
+            GCC_TREAT_WARNINGS_AS_ERRORS=NO
 
-          echo "=== Build exit code: $BUILD_RESULT ==="
-          echo "=== Files in build_output: ==="
-          find "$DERIVED" -name "*.app" 2>/dev/null | head -20
-          echo "=== Top level of build_output: ==="
-          ls -la "$DERIVED" 2>/dev/null || echo "build_output is empty or missing"
-          echo "=== Build/Products: ==="
-          ls -la "$DERIVED/Build/Products/" 2>/dev/null || echo "No Build/Products folder"
+          echo "=== Build finished. Listing SimBuild: ==="
+          ls -la "$BUILD_DIR"
 
-          if [ $BUILD_RESULT -ne 0 ]; then
-            echo "BUILD FAILED with code $BUILD_RESULT"
-            exit $BUILD_RESULT
-          fi
+          echo "=== All .app files: ==="
+          find "$BUILD_DIR" -name "*.app" 2>/dev/null
 
-      - name: Create IPA
-        script: |
-          echo "=== Finding .app ==="
-          echo "DERIVED path: $DERIVED"
-          find "$DERIVED" -name "*.app" 2>/dev/null | grep -v ".appex"
-
-          APP=$(find "$DERIVED/Build/Products" -name "*.app" 2>/dev/null \
-            | grep -v ".appex" \
-            | head -1)
+          # Step 5: Create IPA
+          APP=$(find "$BUILD_DIR" -name "*.app" | grep -v ".appex" | head -1)
+          echo "App to package: $APP"
 
           if [ -z "$APP" ]; then
-            APP=$(find "$DERIVED" -name "*.app" 2>/dev/null \
-              | grep -v ".appex" \
-              | head -1)
-          fi
-
-          echo "Using app: $APP"
-
-          if [ -z "$APP" ]; then
-            echo "No .app found!"
+            echo "ERROR: No .app found in $BUILD_DIR"
+            echo "Full listing:"
+            find "$BUILD_DIR" -maxdepth 5 2>/dev/null
             exit 1
           fi
 
-          mkdir -p /tmp/IPA/Payload
-          cp -r "$APP" /tmp/IPA/Payload/
-          cd /tmp/IPA
+          mkdir -p /tmp/Payload
+          cp -r "$APP" /tmp/Payload/
+          cd /tmp
           zip -r ~/menorahapp.ipa Payload/
+          echo "✅ IPA created successfully"
           ls -lh ~/menorahapp.ipa
-          echo "✅ IPA created"
 
     artifacts:
       - ~/menorahapp.ipa
