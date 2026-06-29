@@ -67,110 +67,92 @@ workflows:
           cd ios
           pod install --repo-update
 
-      - name: Build iOS Simulator
+      - name: Build and Create IPA
         script: |
           cd ios
 
-          # Find workspace
+          # Step 1: Find workspace
           WORKSPACE=$(find . -maxdepth 1 -name "*.xcworkspace" | head -1)
           WORKSPACE_NAME=$(basename "$WORKSPACE" .xcworkspace)
           echo "Workspace: $WORKSPACE_NAME"
 
-          # List ALL schemes so we can see what's available
+          # Step 2: Show ALL schemes
           echo "=== ALL SCHEMES ==="
           xcodebuild -workspace "${WORKSPACE_NAME}.xcworkspace" -list 2>&1
+          echo "==================="
 
-          # Get the MAIN app scheme - skip Pods schemes
-          # The main scheme should match the workspace/app name
-          SCHEME=$(xcodebuild -workspace "${WORKSPACE_NAME}.xcworkspace" -list 2>/dev/null \
-            | awk '/Schemes:/,0' \
-            | grep -v "Schemes:" \
-            | grep -v "^[[:space:]]*$" \
-            | grep -v "Pods-" \
-            | grep -v "AppAuth" \
-            | grep -v "React" \
-            | grep -v "RN" \
-            | grep -v "Expo" \
-            | head -1 \
-            | sed 's/^[[:space:]]*//' \
-            | sed 's/[[:space:]]*$//')
+          # Step 3: Use exact workspace name as scheme (most reliable)
+          SCHEME="$WORKSPACE_NAME"
+          echo "Using scheme: $SCHEME"
 
-          if [ -z "$SCHEME" ]; then
-            SCHEME="$WORKSPACE_NAME"
-          fi
+          # Step 4: Build with explicit output dir and capture full output
+          OUTPUT_DIR="$(pwd)/AppOutput"
+          mkdir -p "$OUTPUT_DIR"
 
-          echo "Using scheme: '$SCHEME'"
-          echo "WORKSPACE_NAME=$WORKSPACE_NAME" >> $CM_ENV
-          echo "SCHEME=$SCHEME" >> $CM_ENV
+          echo "=== STARTING BUILD ==="
+          set -o pipefail
 
-          # Build the main app
           xcodebuild \
             -workspace "${WORKSPACE_NAME}.xcworkspace" \
             -scheme "$SCHEME" \
             -configuration Debug \
             -sdk iphonesimulator \
             -destination 'platform=iOS Simulator,OS=18.2,name=iPhone 16' \
+            -derivedDataPath "$OUTPUT_DIR" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
+            ONLY_ACTIVE_ARCH=YES \
             SWIFT_TREAT_WARNINGS_AS_ERRORS=NO \
-            GCC_TREAT_WARNINGS_AS_ERRORS=NO \
-            build 2>&1 | tail -20
+            GCC_TREAT_WARNINGS_AS_ERRORS=NO 2>&1
 
-          echo "=== Searching for .app ==="
-          DERIVED_BASE=~/Library/Developer/Xcode/DerivedData
+          BUILD_EXIT=$?
+          echo "=== BUILD EXIT CODE: $BUILD_EXIT ==="
 
-          # List the DerivedData folder for our app
-          echo "DerivedData contents:"
-          ls "$DERIVED_BASE/" 2>/dev/null
+          # Step 5: Show what was built
+          echo "=== Contents of AppOutput ==="
+          find "$OUTPUT_DIR" -maxdepth 4 -type d 2>/dev/null | head -30
 
-          # Find Build/Products folder
-          echo "Build Products:"
-          find "$DERIVED_BASE/${WORKSPACE_NAME}-"* -name "Products" -type d 2>/dev/null | head -3
+          echo "=== All .app files ==="
+          find "$OUTPUT_DIR" -name "*.app" -not -name "*.appex" 2>/dev/null
 
-          # Find .app
-          find "$DERIVED_BASE" \
+          if [ $BUILD_EXIT -ne 0 ]; then
+            echo "BUILD FAILED!"
+            exit 1
+          fi
+
+          # Step 6: Find and package the app
+          APP=$(find "$OUTPUT_DIR" \
             -name "*.app" \
             -not -name "*.appex" \
             -not -path "*/Intermediates*" \
-            2>/dev/null | head -10
-
-      - name: Create IPA
-        script: |
-          DERIVED_BASE=~/Library/Developer/Xcode/DerivedData
-
-          # Find .app in DerivedData - look in Products folder
-          APP=$(find "$DERIVED_BASE" \
-            -path "*/Products/Debug-iphonesimulator/*.app" \
-            -not -name "*.appex" \
             2>/dev/null | head -1)
 
-          echo "Found in Products: $APP"
+          echo "App found: $APP"
 
-          # Fallback
           if [ -z "$APP" ]; then
-            APP=$(find "$DERIVED_BASE" \
+            echo "No .app in AppOutput, checking Xcode DerivedData..."
+            APP=$(find ~/Library/Developer/Xcode/DerivedData \
               -name "*.app" \
               -not -name "*.appex" \
               -not -path "*/Intermediates*" \
               2>/dev/null | head -1)
-            echo "Fallback: $APP"
+            echo "DerivedData app: $APP"
           fi
 
           if [ -z "$APP" ]; then
-            echo "No .app found. DerivedData structure:"
-            find "$DERIVED_BASE/${SCHEME_NAME:-MenorahFamilyCamp}"* \
-              -maxdepth 6 -type d 2>/dev/null | head -20
+            echo "ERROR: No .app found"
             exit 1
           fi
 
-          echo "Creating IPA from: $APP"
-          mkdir -p /tmp/IPA/Payload
-          cp -r "$APP" /tmp/IPA/Payload/
-          cd /tmp/IPA
+          # Step 7: Create IPA
+          echo "Packaging: $APP"
+          mkdir -p /tmp/Payload
+          cp -r "$APP" /tmp/Payload/
+          cd /tmp
           zip -r ~/menorahapp.ipa Payload/
           ls -lh ~/menorahapp.ipa
-          echo "✅ IPA created!"
+          echo "✅ IPA created successfully"
 
     artifacts:
       - ~/menorahapp.ipa
