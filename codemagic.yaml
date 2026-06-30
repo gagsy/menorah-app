@@ -22,7 +22,7 @@ workflows:
 
   ios-build:
     name: iOS IPA Build
-    max_build_duration: 90
+    max_build_duration: 45
     environment:
       node: 18
       xcode: 16.2
@@ -77,10 +77,12 @@ workflows:
           mkdir -p "$OUTPUT_DIR"
 
           echo "Building: $WORKSPACE_NAME"
+          echo "OUTPUT_DIR=$OUTPUT_DIR" >> $CM_ENV
+          echo "WORKSPACE_NAME=$WORKSPACE_NAME" >> $CM_ENV
 
-          # Build — allow exit code 65 (script phase warnings treated as errors)
-          # The .app IS created even when exit code is 65
-          xcodebuild \
+          # CRITICAL FIX: timeout command prevents infinite hang
+          # If build takes more than 20 minutes, kill it
+          timeout 1200 xcodebuild \
             -workspace "${WORKSPACE_NAME}.xcworkspace" \
             -scheme "$WORKSPACE_NAME" \
             -configuration Debug \
@@ -92,13 +94,13 @@ workflows:
             CODE_SIGNING_REQUIRED=NO \
             ONLY_ACTIVE_ARCH=YES \
             SWIFT_TREAT_WARNINGS_AS_ERRORS=NO \
-            GCC_TREAT_WARNINGS_AS_ERRORS=NO 2>&1 || true
-          # ↑ "|| true" means: continue even if xcodebuild exits non-zero
+            GCC_TREAT_WARNINGS_AS_ERRORS=NO \
+            build
 
-          echo "OUTPUT_DIR=$OUTPUT_DIR" >> $CM_ENV
-          echo "WORKSPACE_NAME=$WORKSPACE_NAME" >> $CM_ENV
+          BUILD_EXIT=$?
+          echo "Build exit code: $BUILD_EXIT (124 = timeout)"
 
-          # Check if .app was created
+          # Check if .app exists regardless of exit code
           APP=$(find "$OUTPUT_DIR" \
             -name "*.app" \
             -not -name "*.appex" \
@@ -108,23 +110,21 @@ workflows:
           echo "App found: $APP"
 
           if [ -z "$APP" ]; then
-            echo "ERROR: No .app created — real build failure"
+            echo "ERROR: No .app created"
             exit 1
           fi
 
-          echo "✅ Build produced: $APP"
+          echo "✅ App built successfully: $APP"
 
       - name: Create IPA
         script: |
-          echo "Looking in: $OUTPUT_DIR"
-
           APP=$(find "$OUTPUT_DIR" \
             -name "*.app" \
             -not -name "*.appex" \
             -not -path "*/Intermediates*" \
             2>/dev/null | head -1)
 
-          echo "App: $APP"
+          echo "Packaging: $APP"
 
           if [ -z "$APP" ]; then
             echo "No .app found!"
