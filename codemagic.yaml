@@ -80,9 +80,10 @@ workflows:
           echo "OUTPUT_DIR=$OUTPUT_DIR" >> $CM_ENV
           echo "WORKSPACE_NAME=$WORKSPACE_NAME" >> $CM_ENV
 
-          # CRITICAL FIX: timeout command prevents infinite hang
-          # If build takes more than 20 minutes, kill it
-          timeout 1200 xcodebuild \
+          # macOS does NOT have GNU 'timeout' command by default
+          # Just run xcodebuild directly without a timeout wrapper
+          # Codemagic's own max_build_duration (45 min) acts as the safety net
+          xcodebuild \
             -workspace "${WORKSPACE_NAME}.xcworkspace" \
             -scheme "$WORKSPACE_NAME" \
             -configuration Debug \
@@ -98,9 +99,10 @@ workflows:
             build
 
           BUILD_EXIT=$?
-          echo "Build exit code: $BUILD_EXIT (124 = timeout)"
+          echo "Build exit code: $BUILD_EXIT"
 
           # Check if .app exists regardless of exit code
+          # (Expo script-phase warnings can cause non-zero exit even on success)
           APP=$(find "$OUTPUT_DIR" \
             -name "*.app" \
             -not -name "*.appex" \
@@ -110,7 +112,7 @@ workflows:
           echo "App found: $APP"
 
           if [ -z "$APP" ]; then
-            echo "ERROR: No .app created"
+            echo "ERROR: No .app created — real build failure"
             exit 1
           fi
 
