@@ -1,0 +1,65 @@
+name: iOS Build
+
+on:
+  workflow_dispatch:  # Manual trigger button on GitHub
+
+jobs:
+  build-ios:
+    runs-on: macos-14
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Prebuild iOS
+        run: npx expo prebuild --platform ios --clean
+
+      - name: Fix Podfile
+        run: |
+          cd ios
+          if ! grep -q "use_modular_headers!" Podfile; then
+            sed -i '' '1s/^/use_modular_headers!\n/' Podfile
+          fi
+
+      - name: Install CocoaPods
+        run: |
+          cd ios
+          pod install --repo-update
+
+      - name: Build iOS Simulator
+        run: |
+          cd ios
+          WORKSPACE=$(find . -maxdepth 1 -name "*.xcworkspace" | head -1)
+          WORKSPACE_NAME=$(basename "$WORKSPACE" .xcworkspace)
+          xcodebuild \
+            -workspace "${WORKSPACE_NAME}.xcworkspace" \
+            -scheme "$WORKSPACE_NAME" \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination 'platform=iOS Simulator,OS=18.2,name=iPhone 16' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            ONLY_ACTIVE_ARCH=YES \
+            build
+
+      - name: Find and zip .app
+        run: |
+          cd ios
+          APP=$(find build -name "*.app" -not -path "*/Intermediates*" | head -1)
+          mkdir -p Payload
+          cp -r "$APP" Payload/
+          zip -r menorahapp.ipa Payload/
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: menorahapp-ios
+          path: ios/menorahapp.ipa
